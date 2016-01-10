@@ -141,9 +141,9 @@ class ChainRouter implements ChainRouterInterface, WarmableInterface
      *
      * Note: You should use matchRequest if you can.
      */
-    public function match($url)
+    public function match($pathinfo)
     {
-        return $this->doMatch($url);
+        return $this->doMatch($pathinfo);
     }
 
     /**
@@ -162,14 +162,14 @@ class ChainRouter implements ChainRouterInterface, WarmableInterface
      * At least the  url must be provided, if a request is additionally provided
      * the request takes precedence.
      *
-     * @param string  $url
+     * @param string  $pathinfo
      * @param Request $request
      *
      * @return array An array of parameters
      *
      * @throws ResourceNotFoundException If no router matched.
      */
-    private function doMatch($url, Request $request = null)
+    private function doMatch($pathinfo, Request $request = null)
     {
         $methodNotAllowed = null;
 
@@ -180,14 +180,14 @@ class ChainRouter implements ChainRouterInterface, WarmableInterface
                 // matching requests is more powerful than matching URLs only, so try that first
                 if ($router instanceof RequestMatcherInterface) {
                     if (empty($requestForMatching)) {
-                        $requestForMatching = $this->rebuildRequest($url);
+                        $requestForMatching = $this->rebuildRequest($pathinfo);
                     }
 
                     return $router->matchRequest($requestForMatching);
                 }
 
                 // every router implements the match method
-                return $router->match($url);
+                return $router->match($pathinfo);
             } catch (ResourceNotFoundException $e) {
                 if ($this->logger) {
                     $this->logger->debug('Router '.get_class($router).' was not able to match, message "'.$e->getMessage().'"');
@@ -203,7 +203,7 @@ class ChainRouter implements ChainRouterInterface, WarmableInterface
 
         $info = $request
             ? "this request\n$request"
-            : "url '$url'";
+            : "url '$pathinfo'";
         throw $methodNotAllowed ?: new ResourceNotFoundException("None of the routers in the chain matched $info");
     }
 
@@ -255,25 +255,25 @@ class ChainRouter implements ChainRouterInterface, WarmableInterface
      *
      * If the request context is not set, this simply returns the request object built from $uri.
      *
-     * @param string $uri
+     * @param string $pathinfo
      *
      * @return Request
      */
-    private function rebuildRequest($uri)
+    private function rebuildRequest($pathinfo)
     {
         if (!$this->context) {
-            return Request::create($uri);
+            return Request::create($pathinfo);
         }
 
         $server = array();
+        if ($this->context->getBaseUrl()) {
+            $pathinfo = $this->context->getBaseUrl().$pathinfo;
+            $server['SCRIPT_FILENAME'] = $this->context->getBaseUrl();
+            $server['PHP_SELF'] = $this->context->getBaseUrl();
+        }
         if ($this->context->getHost()) {
             $server['SERVER_NAME'] = $this->context->getHost();
             $server['HTTP_HOST'] = $this->context->getHost();
-        }
-        if ($this->context->getBaseUrl()) {
-            $uri = $this->context->getBaseUrl().$uri;
-            $server['SCRIPT_FILENAME'] = $this->context->getBaseUrl();
-            $server['PHP_SELF'] = $this->context->getBaseUrl();
         }
         if ('https' === $this->context->getScheme()) {
             $server['HTTPS'] = 'on';
@@ -291,8 +291,19 @@ class ChainRouter implements ChainRouterInterface, WarmableInterface
                 $server['HTTP_HOST'] .= ':'.$this->context->getHttpPort();
             }
         }
+        // use the array field to have both domain and port.
+        if (isset($server['HTTP_HOST'])) {
+            $pathinfo = $server['HTTP_HOST'].$pathinfo;
+        } else {
+            $pathinfo = 'localhost'.$pathinfo;
+        }
+        if ('https' === $this->context->getScheme()) {
+            $pathinfo = 'https://'.$pathinfo;
+        } else {
+            $pathinfo = 'http://'.$pathinfo;
+        }
 
-        return Request::create($uri, $this->context->getMethod(), $this->context->getParameters(), array(), array(), $server);
+        return Request::create($pathinfo, $this->context->getMethod(), $this->context->getParameters(), array(), array(), $server);
     }
 
     private function getErrorMessage($name, $router = null, $parameters = null)
